@@ -19,7 +19,8 @@ from models import (
 
 from services.r2_storage import (
     upload_file,
-    delete_file
+    delete_file,
+    generate_signed_url
 )
 
 
@@ -54,16 +55,36 @@ def get_user_couple_id():
 
 def timeline_to_dict(event):
 
+    image_url = None
+
+    if event.image_path:
+        try:
+            image_url = generate_signed_url(
+                event.image_path
+            )
+        except Exception as e:
+            print(
+                f"⚠️ Failed to generate timeline "
+                f"image URL: {e}"
+            )
+
     return {
         "id": event.id,
         "title": event.title,
         "description": event.description,
+
         "event_date": (
             event.event_date.isoformat()
             if event.event_date
             else None
         ),
+
+        # R2 object key
         "image_path": event.image_path,
+
+        # Temporary private R2 URL
+        "image_url": image_url,
+
         "created_at": (
             event.created_at.isoformat()
             if event.created_at

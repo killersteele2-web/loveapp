@@ -15,7 +15,8 @@ from models import db, User
 
 from services.r2_storage import (
     upload_file,
-    delete_file
+    delete_file,
+    generate_signed_url
 )
 
 
@@ -32,11 +33,29 @@ profile_bp = Blueprint(
 
 def profile_to_dict(user):
 
+    image_url = None
+
+    if user.profile_image:
+        try:
+            image_url = generate_signed_url(
+                user.profile_image
+            )
+        except Exception as e:
+            print(
+                f"⚠️ Failed to generate profile "
+                f"image URL: {e}"
+            )
+
     return {
         "id": user.id,
         "name": user.name,
         "email": user.email,
-        "profile_image": user.profile_image
+
+        # Keep the R2 object key
+        "profile_image": user.profile_image,
+
+        # Temporary private R2 URL
+        "profile_image_url": image_url
     }
 
 

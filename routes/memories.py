@@ -18,7 +18,8 @@ from models import db, Memory, CoupleMember
 
 from services.r2_storage import (
     upload_file,
-    delete_file
+    delete_file,
+    generate_signed_url
 )
 
 
@@ -73,11 +74,29 @@ def get_user_couple_id():
 
 def memory_to_dict(memory):
 
+    image_url = None
+
+    if memory.image_path:
+        try:
+            image_url = generate_signed_url(
+                memory.image_path
+            )
+        except Exception as e:
+            print(
+                f"⚠️ Failed to generate memory "
+                f"image URL: {e}"
+            )
+
     return {
         "id": memory.id,
         "title": memory.title,
         "description": memory.description,
+
+        # R2 object key
         "image_path": memory.image_path,
+
+        # Temporary private R2 URL
+        "image_url": image_url,
 
         "memory_date": (
             memory.memory_date.isoformat()
