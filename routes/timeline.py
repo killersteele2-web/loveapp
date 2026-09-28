@@ -1,6 +1,4 @@
 from datetime import datetime
-import os
-import uuid
 
 from flask import (
     Blueprint,
@@ -13,12 +11,15 @@ from flask_jwt_extended import (
     get_jwt_identity
 )
 
-from werkzeug.utils import secure_filename
-
 from models import (
     db,
     TimelineEvent,
     CoupleMember
+)
+
+from services.r2_storage import (
+    upload_file,
+    delete_file
 )
 
 
@@ -169,7 +170,11 @@ def create_event():
             "message": "User is not connected to a couple."
         }), 403
 
-    title = request.form.get("title", "").strip()
+    title = request.form.get(
+        "title",
+        ""
+    ).strip()
+
     description = request.form.get(
         "description",
         ""
@@ -206,47 +211,40 @@ def create_event():
 
     image_path = None
 
-    image = request.files.get("image")
+    image = request.files.get(
+        "image"
+    )
 
-    if image:
+    # --------------------------------------------------------
+    # UPLOAD IMAGE TO R2
+    # --------------------------------------------------------
 
-        upload_folder = os.path.join(
-            os.path.dirname(
-                os.path.dirname(__file__)
-            ),
-            "uploads",
-            "timeline"
-        )
+    if image and image.filename:
 
-        os.makedirs(
-            upload_folder,
-            exist_ok=True
-        )
+        try:
 
-        filename = secure_filename(
-            image.filename
-        )
-
-        extension = os.path.splitext(
-            filename
-        )[1]
-
-        unique_filename = (
-            f"{uuid.uuid4().hex}"
-            f"{extension}"
-        )
-
-        image.save(
-            os.path.join(
-                upload_folder,
-                unique_filename
+            image_path = upload_file(
+                image,
+                "timeline"
             )
-        )
 
-        image_path = (
-            f"/uploads/timeline/"
-            f"{unique_filename}"
-        )
+        except Exception as e:
+
+            print(
+                f"❌ R2 timeline upload failed: {e}"
+            )
+
+            return jsonify({
+                "success": False,
+                "message": (
+                    "Failed to upload "
+                    "timeline image."
+                )
+            }), 500
+
+    # --------------------------------------------------------
+    # CREATE DATABASE RECORD
+    # --------------------------------------------------------
 
     event = TimelineEvent(
         couple_id=couple_id,
@@ -261,7 +259,9 @@ def create_event():
 
     return jsonify({
         "success": True,
-        "message": "Timeline event created successfully.",
+        "message": (
+            "Timeline event created successfully."
+        ),
         "event": timeline_to_dict(event)
     }), 201
 
@@ -300,7 +300,9 @@ def update_event(event_id):
             "message": "Timeline event not found."
         }), 404
 
-    title = request.form.get("title")
+    title = request.form.get(
+        "title"
+    )
 
     description = request.form.get(
         "description"
@@ -324,14 +326,18 @@ def update_event(event_id):
 
     if description is not None:
 
-        event.description = description.strip()
+        event.description = (
+            description.strip()
+        )
 
     if event_date:
 
         try:
 
-            event.event_date = datetime.fromisoformat(
-                event_date
+            event.event_date = (
+                datetime.fromisoformat(
+                    event_date
+                )
             )
 
         except ValueError:
@@ -341,47 +347,53 @@ def update_event(event_id):
                 "message": "Invalid event date."
             }), 400
 
-    image = request.files.get("image")
+    image = request.files.get(
+        "image"
+    )
 
-    if image:
+    # --------------------------------------------------------
+    # REPLACE IMAGE IN R2
+    # --------------------------------------------------------
 
-        upload_folder = os.path.join(
-            os.path.dirname(
-                os.path.dirname(__file__)
-            ),
-            "uploads",
-            "timeline"
-        )
+    if image and image.filename:
 
-        os.makedirs(
-            upload_folder,
-            exist_ok=True
-        )
+        # Delete old R2 image
+        if event.image_path:
 
-        filename = secure_filename(
-            image.filename
-        )
+            try:
 
-        extension = os.path.splitext(
-            filename
-        )[1]
+                delete_file(
+                    event.image_path
+                )
 
-        unique_filename = (
-            f"{uuid.uuid4().hex}"
-            f"{extension}"
-        )
+            except Exception as e:
 
-        image.save(
-            os.path.join(
-                upload_folder,
-                unique_filename
+                print(
+                    f"⚠️ Failed to delete old "
+                    f"timeline image: {e}"
+                )
+
+        # Upload new R2 image
+        try:
+
+            event.image_path = upload_file(
+                image,
+                "timeline"
             )
-        )
 
-        event.image_path = (
-            f"/uploads/timeline/"
-            f"{unique_filename}"
-        )
+        except Exception as e:
+
+            print(
+                f"❌ R2 timeline upload failed: {e}"
+            )
+
+            return jsonify({
+                "success": False,
+                "message": (
+                    "Failed to upload "
+                    "new timeline image."
+                )
+            }), 500
 
     event.updated_at = datetime.utcnow()
 
@@ -389,7 +401,9 @@ def update_event(event_id):
 
     return jsonify({
         "success": True,
-        "message": "Timeline event updated successfully.",
+        "message": (
+            "Timeline event updated successfully."
+        ),
         "event": timeline_to_dict(event)
     }), 200
 
@@ -428,10 +442,35 @@ def delete_event(event_id):
             "message": "Timeline event not found."
         }), 404
 
+    # --------------------------------------------------------
+    # DELETE IMAGE FROM R2
+    # --------------------------------------------------------
+
+    if event.image_path:
+
+        try:
+
+            delete_file(
+                event.image_path
+            )
+
+        except Exception as e:
+
+            print(
+                f"⚠️ Failed to delete "
+                f"timeline image from R2: {e}"
+            )
+
+    # --------------------------------------------------------
+    # DELETE DATABASE RECORD
+    # --------------------------------------------------------
+
     db.session.delete(event)
     db.session.commit()
 
     return jsonify({
         "success": True,
-        "message": "Timeline event deleted successfully."
+        "message": (
+            "Timeline event deleted successfully."
+        )
     }), 200

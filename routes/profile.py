@@ -1,5 +1,4 @@
 import os
-import uuid
 
 from flask import (
     Blueprint,
@@ -12,9 +11,12 @@ from flask_jwt_extended import (
     get_jwt_identity
 )
 
-from werkzeug.utils import secure_filename
-
 from models import db, User
+
+from services.r2_storage import (
+    upload_file,
+    delete_file
+)
 
 
 profile_bp = Blueprint(
@@ -176,39 +178,48 @@ def upload_profile_image():
             )
         }), 400
 
-    upload_folder = os.path.join(
-        os.path.dirname(
-            os.path.dirname(__file__)
-        ),
-        "uploads",
-        "profiles"
-    )
+    # --------------------------------------------------------
+    # DELETE OLD PROFILE IMAGE FROM R2
+    # --------------------------------------------------------
 
-    os.makedirs(
-        upload_folder,
-        exist_ok=True
-    )
+    if user.profile_image:
+        try:
+            delete_file(
+                user.profile_image
+            )
+        except Exception as e:
+            print(
+                f"⚠️ Failed to delete old "
+                f"profile image: {e}"
+            )
 
-    filename = secure_filename(
-        image.filename
-    )
+    # --------------------------------------------------------
+    # UPLOAD NEW IMAGE TO R2
+    # --------------------------------------------------------
 
-    unique_filename = (
-        f"{uuid.uuid4().hex}"
-        f"{extension}"
-    )
+    try:
 
-    image.save(
-        os.path.join(
-            upload_folder,
-            unique_filename
+        object_key = upload_file(
+            image,
+            "profiles"
         )
-    )
 
-    user.profile_image = (
-        f"/uploads/profiles/"
-        f"{unique_filename}"
-    )
+    except Exception as e:
+
+        print(
+            f"❌ R2 profile upload failed: {e}"
+        )
+
+        return jsonify({
+            "success": False,
+            "message": "Failed to upload profile image."
+        }), 500
+
+    # --------------------------------------------------------
+    # SAVE R2 OBJECT PATH TO DATABASE
+    # --------------------------------------------------------
+
+    user.profile_image = object_key
 
     db.session.commit()
 

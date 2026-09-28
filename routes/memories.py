@@ -1,12 +1,10 @@
 import os
 from datetime import date
-from uuid import uuid4
 
 from flask import (
     Blueprint,
     jsonify,
-    request,
-    send_from_directory
+    request
 )
 
 from flask_jwt_extended import (
@@ -17,6 +15,11 @@ from flask_jwt_extended import (
 from werkzeug.utils import secure_filename
 
 from models import db, Memory, CoupleMember
+
+from services.r2_storage import (
+    upload_file,
+    delete_file
+)
 
 
 memories_bp = Blueprint(
@@ -29,18 +32,6 @@ memories_bp = Blueprint(
 # ============================================================
 # CONFIGURATION
 # ============================================================
-
-UPLOAD_FOLDER = os.path.join(
-    os.path.dirname(os.path.dirname(__file__)),
-    "uploads",
-    "memories"
-)
-
-os.makedirs(
-    UPLOAD_FOLDER,
-    exist_ok=True
-)
-
 
 ALLOWED_EXTENSIONS = {
     "png",
@@ -231,7 +222,7 @@ def create_memory():
     image_path = None
 
     # --------------------------------------------------------
-    # IMAGE UPLOAD
+    # IMAGE UPLOAD TO R2
     # --------------------------------------------------------
 
     if "image" in request.files:
@@ -247,29 +238,23 @@ def create_memory():
                     "message": "Unsupported image format"
                 }), 400
 
-            original_name = secure_filename(
-                image.filename
-            )
+            try:
 
-            extension = original_name.rsplit(
-                ".",
-                1
-            )[1].lower()
-
-            filename = (
-                f"{uuid4().hex}.{extension}"
-            )
-
-            image.save(
-                os.path.join(
-                    UPLOAD_FOLDER,
-                    filename
+                image_path = upload_file(
+                    image,
+                    "memories"
                 )
-            )
 
-            image_path = (
-                f"/uploads/memories/{filename}"
-            )
+            except Exception as e:
+
+                print(
+                    f"❌ R2 memory upload failed: {e}"
+                )
+
+                return jsonify({
+                    "success": False,
+                    "message": "Failed to upload memory image."
+                }), 500
 
     # --------------------------------------------------------
     # DATABASE
@@ -371,7 +356,7 @@ def update_memory(memory_id):
                 }), 400
 
     # --------------------------------------------------------
-    # UPDATE IMAGE
+    # UPDATE IMAGE IN R2
     # --------------------------------------------------------
 
     if "image" in request.files:
@@ -391,44 +376,45 @@ def update_memory(memory_id):
                     )
                 }), 400
 
-            # Delete old image
+            # Delete old R2 image
             if memory.image_path:
 
-                old_filename = os.path.basename(
-                    memory.image_path
+                try:
+
+                    delete_file(
+                        memory.image_path
+                    )
+
+                except Exception as e:
+
+                    print(
+                        f"⚠️ Failed to delete old "
+                        f"memory image: {e}"
+                    )
+
+            # Upload new R2 image
+            try:
+
+                image_path = upload_file(
+                    image,
+                    "memories"
                 )
 
-                old_path = os.path.join(
-                    UPLOAD_FOLDER,
-                    old_filename
+                memory.image_path = image_path
+
+            except Exception as e:
+
+                print(
+                    f"❌ R2 memory upload failed: {e}"
                 )
 
-                if os.path.exists(old_path):
-                    os.remove(old_path)
-
-            original_name = secure_filename(
-                image.filename
-            )
-
-            extension = original_name.rsplit(
-                ".",
-                1
-            )[1].lower()
-
-            filename = (
-                f"{uuid4().hex}.{extension}"
-            )
-
-            image.save(
-                os.path.join(
-                    UPLOAD_FOLDER,
-                    filename
-                )
-            )
-
-            memory.image_path = (
-                f"/uploads/memories/{filename}"
-            )
+                return jsonify({
+                    "success": False,
+                    "message": (
+                        "Failed to upload "
+                        "new memory image."
+                    )
+                }), 500
 
     db.session.commit()
 
@@ -523,22 +509,23 @@ def delete_memory(memory_id):
         }), 404
 
     # --------------------------------------------------------
-    # DELETE IMAGE
+    # DELETE IMAGE FROM R2
     # --------------------------------------------------------
 
     if memory.image_path:
 
-        filename = os.path.basename(
-            memory.image_path
-        )
+        try:
 
-        image_path = os.path.join(
-            UPLOAD_FOLDER,
-            filename
-        )
+            delete_file(
+                memory.image_path
+            )
 
-        if os.path.exists(image_path):
-            os.remove(image_path)
+        except Exception as e:
+
+            print(
+                f"⚠️ Failed to delete "
+                f"memory image from R2: {e}"
+            )
 
     # --------------------------------------------------------
     # DELETE DATABASE RECORD
@@ -556,16 +543,17 @@ def delete_memory(memory_id):
 
 
 # ============================================================
-# SERVE UPLOADED IMAGES
+# OLD LOCAL IMAGE ROUTE REMOVED
 # ============================================================
-
-@memories_bp.route(
-    "/image/<filename>",
-    methods=["GET"]
-)
-def get_image(filename):
-
-    return send_from_directory(
-        UPLOAD_FOLDER,
-        filename
-    )
+#
+# Images are now stored in Cloudflare R2.
+#
+# The old:
+#
+# /api/memories/image/<filename>
+#
+# endpoint is intentionally removed.
+#
+# Flutter should eventually receive a proper R2
+# image URL or signed URL.
+#
