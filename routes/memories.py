@@ -1,4 +1,3 @@
-import os
 from datetime import date
 
 from flask import (
@@ -12,14 +11,12 @@ from flask_jwt_extended import (
     get_jwt_identity
 )
 
-from werkzeug.utils import secure_filename
-
 from models import db, Memory, CoupleMember
 
 from services.r2_storage import (
     upload_file,
     delete_file,
-    generate_signed_url
+    get_image_url
 )
 
 
@@ -74,19 +71,6 @@ def get_user_couple_id():
 
 def memory_to_dict(memory):
 
-    image_url = None
-
-    if memory.image_path:
-        try:
-            image_url = generate_signed_url(
-                memory.image_path
-            )
-        except Exception as e:
-            print(
-                f"⚠️ Failed to generate memory "
-                f"image URL: {e}"
-            )
-
     return {
         "id": memory.id,
         "title": memory.title,
@@ -95,8 +79,8 @@ def memory_to_dict(memory):
         # R2 object key
         "image_path": memory.image_path,
 
-        # Temporary private R2 URL
-        "image_url": image_url,
+        # Signed R2 link, valid for 7 days
+        "image_url": get_image_url(memory.image_path),
 
         "memory_date": (
             memory.memory_date.isoformat()
@@ -375,8 +359,14 @@ def update_memory(memory_id):
                 }), 400
 
     # --------------------------------------------------------
-    # UPDATE IMAGE IN R2
+    # REPLACE IMAGE IN R2
+    #
+    # Upload the NEW image first. Only delete the old one
+    # after the upload worked, so a failed upload never
+    # leaves the memory without a photo.
     # --------------------------------------------------------
+
+    old_image_path = None
 
     if "image" in request.files:
 
@@ -395,31 +385,12 @@ def update_memory(memory_id):
                     )
                 }), 400
 
-            # Delete old R2 image
-            if memory.image_path:
-
-                try:
-
-                    delete_file(
-                        memory.image_path
-                    )
-
-                except Exception as e:
-
-                    print(
-                        f"⚠️ Failed to delete old "
-                        f"memory image: {e}"
-                    )
-
-            # Upload new R2 image
             try:
 
-                image_path = upload_file(
+                new_image_path = upload_file(
                     image,
                     "memories"
                 )
-
-                memory.image_path = image_path
 
             except Exception as e:
 
@@ -435,7 +406,26 @@ def update_memory(memory_id):
                     )
                 }), 500
 
+            old_image_path = memory.image_path
+            memory.image_path = new_image_path
+
     db.session.commit()
+
+    # Old image is only removed after the new one is saved.
+    if old_image_path:
+
+        try:
+
+            delete_file(
+                old_image_path
+            )
+
+        except Exception as e:
+
+            print(
+                f"⚠️ Failed to delete old "
+                f"memory image: {e}"
+            )
 
     return jsonify({
         "success": True,
@@ -527,16 +517,25 @@ def delete_memory(memory_id):
             "message": "Memory not found"
         }), 404
 
+    image_path = memory.image_path
+
+    # --------------------------------------------------------
+    # DELETE DATABASE RECORD
+    # --------------------------------------------------------
+
+    db.session.delete(memory)
+    db.session.commit()
+
     # --------------------------------------------------------
     # DELETE IMAGE FROM R2
     # --------------------------------------------------------
 
-    if memory.image_path:
+    if image_path:
 
         try:
 
             delete_file(
-                memory.image_path
+                image_path
             )
 
         except Exception as e:
@@ -546,33 +545,9 @@ def delete_memory(memory_id):
                 f"memory image from R2: {e}"
             )
 
-    # --------------------------------------------------------
-    # DELETE DATABASE RECORD
-    # --------------------------------------------------------
-
-    db.session.delete(memory)
-    db.session.commit()
-
     return jsonify({
         "success": True,
         "message": (
             "Memory deleted successfully ❤️"
         )
     })
-
-
-# ============================================================
-# OLD LOCAL IMAGE ROUTE REMOVED
-# ============================================================
-#
-# Images are now stored in Cloudflare R2.
-#
-# The old:
-#
-# /api/memories/image/<filename>
-#
-# endpoint is intentionally removed.
-#
-# Flutter should eventually receive a proper R2
-# image URL or signed URL.
-#

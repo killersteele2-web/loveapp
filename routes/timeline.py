@@ -20,7 +20,7 @@ from models import (
 from services.r2_storage import (
     upload_file,
     delete_file,
-    generate_signed_url
+    get_image_url
 )
 
 
@@ -55,19 +55,6 @@ def get_user_couple_id():
 
 def timeline_to_dict(event):
 
-    image_url = None
-
-    if event.image_path:
-        try:
-            image_url = generate_signed_url(
-                event.image_path
-            )
-        except Exception as e:
-            print(
-                f"⚠️ Failed to generate timeline "
-                f"image URL: {e}"
-            )
-
     return {
         "id": event.id,
         "title": event.title,
@@ -82,8 +69,8 @@ def timeline_to_dict(event):
         # R2 object key
         "image_path": event.image_path,
 
-        # Temporary private R2 URL
-        "image_url": image_url,
+        # Signed R2 link, valid for 7 days
+        "image_url": get_image_url(event.image_path),
 
         "created_at": (
             event.created_at.isoformat()
@@ -368,36 +355,25 @@ def update_event(event_id):
                 "message": "Invalid event date."
             }), 400
 
+    # --------------------------------------------------------
+    # REPLACE IMAGE IN R2
+    #
+    # Upload the NEW image first. Only delete the old one
+    # after the upload worked, so a failed upload never
+    # leaves the event without a photo.
+    # --------------------------------------------------------
+
+    old_image_path = None
+
     image = request.files.get(
         "image"
     )
 
-    # --------------------------------------------------------
-    # REPLACE IMAGE IN R2
-    # --------------------------------------------------------
-
     if image and image.filename:
 
-        # Delete old R2 image
-        if event.image_path:
-
-            try:
-
-                delete_file(
-                    event.image_path
-                )
-
-            except Exception as e:
-
-                print(
-                    f"⚠️ Failed to delete old "
-                    f"timeline image: {e}"
-                )
-
-        # Upload new R2 image
         try:
 
-            event.image_path = upload_file(
+            new_image_path = upload_file(
                 image,
                 "timeline"
             )
@@ -416,9 +392,28 @@ def update_event(event_id):
                 )
             }), 500
 
+        old_image_path = event.image_path
+        event.image_path = new_image_path
+
     event.updated_at = datetime.utcnow()
 
     db.session.commit()
+
+    # Old image is only removed after the new one is saved.
+    if old_image_path:
+
+        try:
+
+            delete_file(
+                old_image_path
+            )
+
+        except Exception as e:
+
+            print(
+                f"⚠️ Failed to delete old "
+                f"timeline image: {e}"
+            )
 
     return jsonify({
         "success": True,
@@ -463,16 +458,25 @@ def delete_event(event_id):
             "message": "Timeline event not found."
         }), 404
 
+    image_path = event.image_path
+
+    # --------------------------------------------------------
+    # DELETE DATABASE RECORD
+    # --------------------------------------------------------
+
+    db.session.delete(event)
+    db.session.commit()
+
     # --------------------------------------------------------
     # DELETE IMAGE FROM R2
     # --------------------------------------------------------
 
-    if event.image_path:
+    if image_path:
 
         try:
 
             delete_file(
-                event.image_path
+                image_path
             )
 
         except Exception as e:
@@ -481,13 +485,6 @@ def delete_event(event_id):
                 f"⚠️ Failed to delete "
                 f"timeline image from R2: {e}"
             )
-
-    # --------------------------------------------------------
-    # DELETE DATABASE RECORD
-    # --------------------------------------------------------
-
-    db.session.delete(event)
-    db.session.commit()
 
     return jsonify({
         "success": True,

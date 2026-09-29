@@ -16,7 +16,7 @@ from models import db, User
 from services.r2_storage import (
     upload_file,
     delete_file,
-    generate_signed_url
+    get_image_url
 )
 
 
@@ -33,29 +33,16 @@ profile_bp = Blueprint(
 
 def profile_to_dict(user):
 
-    image_url = None
-
-    if user.profile_image:
-        try:
-            image_url = generate_signed_url(
-                user.profile_image
-            )
-        except Exception as e:
-            print(
-                f"⚠️ Failed to generate profile "
-                f"image URL: {e}"
-            )
-
     return {
         "id": user.id,
         "name": user.name,
         "email": user.email,
 
-        # Keep the R2 object key
+        # R2 object key
         "profile_image": user.profile_image,
 
-        # Temporary private R2 URL
-        "profile_image_url": image_url
+        # Signed R2 link, valid for 7 days
+        "profile_image_url": get_image_url(user.profile_image)
     }
 
 
@@ -198,22 +185,11 @@ def upload_profile_image():
         }), 400
 
     # --------------------------------------------------------
-    # DELETE OLD PROFILE IMAGE FROM R2
-    # --------------------------------------------------------
-
-    if user.profile_image:
-        try:
-            delete_file(
-                user.profile_image
-            )
-        except Exception as e:
-            print(
-                f"⚠️ Failed to delete old "
-                f"profile image: {e}"
-            )
-
-    # --------------------------------------------------------
-    # UPLOAD NEW IMAGE TO R2
+    # UPLOAD NEW IMAGE TO R2 FIRST
+    #
+    # The old picture is only deleted after the new one is
+    # uploaded and saved, so a failed upload never leaves
+    # you without a profile picture.
     # --------------------------------------------------------
 
     try:
@@ -234,13 +210,26 @@ def upload_profile_image():
             "message": "Failed to upload profile image."
         }), 500
 
-    # --------------------------------------------------------
-    # SAVE R2 OBJECT PATH TO DATABASE
-    # --------------------------------------------------------
+    old_image = user.profile_image
 
     user.profile_image = object_key
 
     db.session.commit()
+
+    # --------------------------------------------------------
+    # DELETE OLD PROFILE IMAGE FROM R2
+    # --------------------------------------------------------
+
+    if old_image:
+        try:
+            delete_file(
+                old_image
+            )
+        except Exception as e:
+            print(
+                f"⚠️ Failed to delete old "
+                f"profile image: {e}"
+            )
 
     return jsonify({
         "success": True,

@@ -15,6 +15,8 @@ from models import (
     TimelineEvent
 )
 
+from services.r2_storage import get_image_url
+
 from datetime import datetime
 
 couples_bp = Blueprint(
@@ -47,7 +49,10 @@ def serialize_member(user):
         "id": user.id,
         "name": user.name,
         "email": user.email,
-        "profile_image": user.profile_image
+        "profile_image": user.profile_image,
+
+        # Full R2 link the app can open directly.
+        "profile_image_url": get_image_url(user.profile_image)
     }
 
 
@@ -115,6 +120,7 @@ def get_my_couple():
         "success": True,
         "couple": serialize_couple(couple)
     }), 200
+
 
 # ============================================================
 # UPDATE RELATIONSHIP DATE
@@ -207,6 +213,7 @@ def update_relationship_date():
         ),
         "couple": serialize_couple(couple)
     }), 200
+
 
 # ============================================================
 # JOIN COUPLE

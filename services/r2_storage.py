@@ -5,10 +5,16 @@ import boto3
 from botocore.client import Config
 
 
-R2_ACCOUNT_ID = os.getenv("R2_ACCOUNT_ID")
-R2_ACCESS_KEY_ID = os.getenv("R2_ACCESS_KEY_ID")
-R2_SECRET_ACCESS_KEY = os.getenv("R2_SECRET_ACCESS_KEY")
-R2_BUCKET_NAME = os.getenv("R2_BUCKET_NAME")
+def _env(name):
+    """Read an environment variable and strip spaces/newlines."""
+    value = os.getenv(name)
+    return value.strip() if value else value
+
+
+R2_ACCOUNT_ID = _env("R2_ACCOUNT_ID")
+R2_ACCESS_KEY_ID = _env("R2_ACCESS_KEY_ID")
+R2_SECRET_ACCESS_KEY = _env("R2_SECRET_ACCESS_KEY")
+R2_BUCKET_NAME = _env("R2_BUCKET_NAME")
 
 
 # ============================================================
@@ -205,3 +211,36 @@ def generate_signed_url(
         )
 
         return None
+
+
+# ============================================================
+# IMAGE URL FOR THE APP
+# ============================================================
+
+IMAGE_URL_EXPIRES = 60 * 60 * 24 * 7  # 7 days (R2 maximum)
+
+
+def get_image_url(object_key, expires_in=IMAGE_URL_EXPIRES):
+    """
+    Turns a stored R2 key (e.g. 'profiles/abc.png') into a link
+    the app can open. Returns None when there is no usable image.
+    """
+
+    if not object_key:
+        return None
+
+    key = str(object_key).strip()
+
+    if not key or key == "null":
+        return None
+
+    # Already a full URL — use as-is.
+    if key.startswith("http://") or key.startswith("https://"):
+        return key
+
+    # Old images saved on the Flask server (/uploads/...) are not
+    # in R2, so don't sign them. The app falls back to profile_image.
+    if key.startswith("/") or key.startswith("uploads/"):
+        return None
+
+    return generate_signed_url(key, expires_in=expires_in)

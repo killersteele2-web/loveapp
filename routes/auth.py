@@ -15,6 +15,8 @@ from models import (
     CoupleMember
 )
 
+from services.r2_storage import get_image_url
+
 
 auth_bp = Blueprint(
     "auth",
@@ -23,6 +25,21 @@ auth_bp = Blueprint(
 )
 
 bcrypt = Bcrypt()
+
+
+# ============================================================
+# HELPERS
+# ============================================================
+
+def serialize_user(user):
+    """User JSON with both the stored R2 key and a usable link."""
+    return {
+        "id": user.id,
+        "name": user.name,
+        "email": user.email,
+        "profile_image": user.profile_image,
+        "profile_image_url": get_image_url(user.profile_image)
+    }
 
 
 # ============================================================
@@ -151,17 +168,20 @@ def register():
     # --------------------------------------------------------
 
     return jsonify({
-    "success": True,
-    "couple": {
-        "id": couple.id,
-        "invite_code": couple.invite_code,
-        "relationship_start_date": (
-            couple.relationship_start_date.isoformat()
-            if couple and couple.relationship_start_date
-            else None
-        )
-    }
-}), 201
+        "success": True,
+        "message": "Account created successfully.",
+        "token": access_token,
+        "user": serialize_user(user),
+        "couple": {
+            "id": couple.id,
+            "invite_code": couple.invite_code,
+            "relationship_start_date": (
+                couple.relationship_start_date.isoformat()
+                if couple.relationship_start_date
+                else None
+            )
+        }
+    }), 201
 
 
 # ============================================================
@@ -268,12 +288,7 @@ def login():
         "success": True,
         "message": "Login successful.",
         "token": access_token,
-        "user": {
-            "id": user.id,
-            "name": user.name,
-            "email": user.email,
-            "profile_image": user.profile_image
-        },
+        "user": serialize_user(user),
         "couple": {
             "id": couple_id,
             "invite_code": invite_code
@@ -322,6 +337,7 @@ def me():
 
     couple_id = None
     invite_code = None
+    relationship_start_date = None
     partner = None
 
     if membership:
@@ -336,6 +352,12 @@ def me():
 
             invite_code = couple.invite_code
 
+            relationship_start_date = (
+                couple.relationship_start_date.isoformat()
+                if couple.relationship_start_date
+                else None
+            )
+
             # ------------------------------------------------
             # Find the other member of the couple
             # ------------------------------------------------
@@ -347,13 +369,7 @@ def me():
                     partner_user = member.user
 
                     if partner_user:
-
-                        partner = {
-                            "id": partner_user.id,
-                            "name": partner_user.name,
-                            "email": partner_user.email,
-                            "profile_image": partner_user.profile_image
-                        }
+                        partner = serialize_user(partner_user)
 
                     break
 
@@ -363,18 +379,11 @@ def me():
 
     return jsonify({
         "success": True,
-
-        "user": {
-            "id": user.id,
-            "name": user.name,
-            "email": user.email,
-            "profile_image": user.profile_image
-        },
-
+        "user": serialize_user(user),
         "partner": partner,
-
         "couple": {
             "id": couple_id,
-            "invite_code": invite_code
+            "invite_code": invite_code,
+            "relationship_start_date": relationship_start_date
         }
     }), 200
